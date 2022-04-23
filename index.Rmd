@@ -1,0 +1,152 @@
+---
+title: 'VAR Relationship of Housing'
+author: "Kieran Stewart-Phillips"
+date: "`r format(Sys.Date(),'%B %d, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    fig_caption: yes
+    theme: cerulean
+    toc: yes
+    toc_depth: 4
+    toc_float: no
+  pdf_document:
+    toc: yes
+---
+```{r setup, include=FALSE }
+knitr::opts_chunk$set(echo = FALSE)
+rm(list = ls())
+graphics.off()
+```
+
+```{r downloading packages, message = FALSE, warning = FALSE}
+require(fpp3)
+require(tidyverse)
+require(dplyr)
+require(tidyquant)
+require(lubridate)
+require(timetk)
+require(urca)
+require(vars)
+require(lmtest)
+require(kableExtra)
+require(frequencyConnectedness)
+require(tsDyn)
+```
+## Elevator Pitch
+
+New Privately-Owned Housing Units Started and Loans and Leases in Bank Credit from all commercial banks in the United States look to exhibit dual-causality at a very high significance level, which goes in line with what is expected at least with regards to the effect of bank loans on new housing units. The variation in both datasets is not necessarily impacted at any high level from the each other however, which likely indicates that there are other outside variables that need to be studied to further elaborate on this relationship.To look at the specific code for this project, please see the attached link below. 
+
+Link to project code: [Code](https://kieranstewart-phillips.github.io/projects.html)
+
+## Introduction
+
+The housing market stands as one of the most volatile markets in the United States. From the Great Depression to the 2008 housing bubble, crashes or fluctuations in general with American housing have come to have far-reaching economic impact across the nation. Therefore, the ability to study variables that could come to impact housing and see what specific relations the housing market can have with said variables is key to understanding past market fluctuations and predict future influences. 
+
+In this paper, we analyze the dynamic relationship between housing and bank loans using a Vector Auto-Regression (VAR) model in order to see what sort of relationship, if any, is observed between the two. To best accomplish this, the variables below were chosen:
+
+**New Privately-Owned Hosing Units Started: Total Units (HOUST)** - This variable was chosen as it falls within reason that the amount of new homes being commissioned for development are likely good indicators of the housing market.
+
+**Loans and Leases in Bank Credit, All Commercial Banks (LOANS)** - This variable was chosen with the notion that credit loans, which are used widely in order to buy or build homes, would have some sort of relationship with the number of new housing units started.
+
+Both variables are recorded monthly and are seasonally adjusted. HOUST is recorded in thousands of units, while LOANS is recorded in billions of U.S. dollars.
+
+```{r getdata}
+VarList <- c("HOUST", "LOANS")
+var1 <- tq_get(VarList, get = "economic.data", from = "1959-01-01") %>%
+  mutate(Month = yearmonth(date)) %>% dplyr::select(-date) %>%
+  as_tsibble(index = Month, key = symbol)
+var2 <- var1 %>%
+  pivot_wider(names_from = symbol, values_from = price) %>%
+  as_tsibble()
+```
+
+## Initial Plots
+
+While not much can be gleamed about the variables' relationship with one another from merely observing the independent graphs of each variable, it does give a good look into the trends of each variable over time.
+
+In the plots below, it seems that the number of new privately-commissioned houses fluctuates between rises and dips, with one particularly notable time period being the last dip likely a result of the 2008 housing bubble. Loans on the other hand look to be steadily increasing throughout the time period. 
+
+```{r plot}
+var1 %>% ggplot(aes(x = Month, y = price)) +
+  geom_line() +
+  facet_grid(vars(symbol), scales = "free_y") 
+```
+
+## VAR
+
+The Vector Auto-Regression model, or VAR model, is a statistical model used to capture the relationship between multiple variables in a time-series. VAR models do this by looking at a number of earlier time periods using lagged values of the specific variables being measured at the various points in the past. For example, a 6th-order VAR model for the number of bank loans would model each year's number of loans as a linear combination of the last five years of recorded loan amounts.
+
+In order to use a VAR model, all variables must be of the same order of integration and, for this case, must be stationary. In order to check and see if the variables chosen in this paper are stationary, a unit-root test must be conducted:
+
+```{r unitRoots}
+var1 %>% 
+  features(price, unitroot_ndiffs) %>% 
+  kable(format = "html", table.attr = "style='width:30%;' ") %>% 
+  kableExtra::kable_styling()
+```
+
+A unit root can be identified as a stochastic trend in a time series model that shows a systematic unpredictable pattern associated with time. The table above shows us that our HOUST variable as one unit root, while our LOANS variable has 2. In order to prevent these unit roots from corrupting our analysis and to further be able to use VAR, we must difference the unit roots until both variables are stationary.
+
+After differencing, we must address the order of the variables in the VAR by ordering the variables from the most exogenous variable first to the most endogenous variable last. 
+
+```{r difference, results = 'hide'}
+difference <- var2 %>%
+  mutate(gHOUST = 100 * difference(log(HOUST)), 
+         gLOANS  = 100 * difference(log(LOANS), lag = 2),
+          ) %>% 
+        dplyr::select(gHOUST,gLOANS) %>% 
+        tidyr::drop_na() 
+difference1 <- as.ts(difference, start = c(1959, 2), frequency = 12)
+difference1
+```
+
+```{r variableorder}
+order <- difference1[,c(2,1)]
+tmp <- VARselect(order,lag.max = 12,type = "const")
+tmp
+```
+
+```{r pselection, results = 'hide'}
+p <- tmp$selection[2]
+```
+
+```{r VARestimation, results = 'hide'}
+var.house <- VAR(order, p = p, type = "const")
+summary(var.house)
+```
+## Causality Analysis
+
+We can then use the Granger causality test to figure out whether the lagged values of our LOANS variable help forecast any future values of HOUST, which would allow us to conclude causation. The two hypothesis tests used are shown below and corressponding p-values look to be both highly significant. 
+
+```{r GrangerCausality}
+cat("H0: gLOANS does not cause gHOUST, H1: it does \n")
+grangertest(gHOUST ~ gLOANS, order = p, data = order)
+
+cat("\nH0: gHOUST does not cause gLOANS,  H1: it does\n")
+grangertest(gLOANS ~ gHOUST, order = p, data = order)
+```
+
+## IRF
+
+The IRF, or the Impulse Response Functions, are a set of plots shown below that attempt to analyze relationship between multiple variables using shock analysis. In other words, the IRF looks to see how one variable will react to a shock implemented in another. 
+In the below graphs, it looks as though shocks to each variable do not have any exceptionally large impact on the other variable. This is especially true for shocks on HOUST for LOANS. 
+
+```{r IRF}
+plot(irf(var.house, n.ahead = 6, boot = TRUE ))
+```
+
+## FEVD
+
+One last model we can use to examine the relationship between both variables lies in the Forecast Error Variance Decomposition (FEVD) output. The FEVD output looks to examine how each variable impacts the variance changes seen over time with the other variable being measured. 
+
+In the below graph, it appears that HOUST has an almost insignificant but growing effect on the overall variance of LOANS, while LOANS on the other hand has practically no effect on the variance of HOUST.
+
+```{r fevd}
+plot(fevd(var.house, n.ahead = 12))
+```
+
+## Conclusion
+
+Overall, the relationship between HOUST and LOANS after analysis seems to be varying from expectations in some ways, while also lining up with predictions in other areas. Our Granger Causality analysis leads to a conclusion that both variables show observations of dual-causality, meaning that the results of each variable are being impacted from each other. Our IRF plots show little to no reaction in LOANS from HOUST, meaning that it is not clear that there is much of a relationship between the two in a way that a shock to the number of new private houses being commissioned would affect the amount of loans. This would imply that there are likely other outside factors in the time-frame that could be affecting LOANS outside of HOUST. This is somewhat true when looking at the IFR for HOUST on LOANS, however here there seems to be some relative change seen in the peak of the shock from the two. However, it is not entirely clear if the fluctuation seen from the IFR is a result of housing specifically, or from other outside influences seeing as though the fluctuation tends to follow the average with a high confidence interval. Lastly, our FEVD output shows practically no correlation between the variables and their respective variances from each other. While one could observe there being a slight increase in the impact of HOUST over time, this increase is not that large. Ultimately, while it is clear there is  some interplay between the two variables with each other, there are quite possibly many more unobserved factors affecting both that one would be unable to make a strong claim about any impact one way or another on the variables.
