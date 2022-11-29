@@ -34,7 +34,7 @@ require(kableExtra)
 require(frequencyConnectedness)
 require(tsDyn)
 ```
-## Elevator Pitch
+## Executive Summary
 
 New Privately-Owned Housing Units Started and Loans and Leases in Bank Credit from all commercial banks in the United States look to exhibit dual-causality at a very high significance level, which goes in line with what is expected at least with regards to the effect of bank loans on new housing units. The variation in both datasets is not necessarily impacted at any high level from the each other however, which likely indicates that there are other outside variables that need to be studied to further elaborate on this relationship.To look at the specific code for this project, please see the attached link below. 
 
